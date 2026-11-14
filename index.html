@@ -963,7 +963,7 @@ html[data-theme="dark"] input,html[data-theme="dark"] select,html[data-theme="da
 
 <footer><div class="wrap">
   <div>© <span id="yr"></span> <span data-c="nom"></span> — Andenne · TVA BE 0805.602.222 · <a href="#" class="lglink" style="text-decoration:underline">Mentions légales &amp; vie privée</a></div>
-  <div><a href="panel.html" style="font-weight:800">🔧 Espace garage</a> · <span class="sig"><span style="opacity:.6">v3.5</span></span></div><div class="devbox"><a class="credit" href="https://www.hassanimohamedislam.com" target="_blank" rel="noopener">Développé avec <span class="hb">♥</span> par le développeur <b>Atom</b></a><div class="atom-ct"><a href="https://www.instagram.com/islem_atom/" target="_blank" rel="noopener">📷 @islem_atom</a><a href="mailto:islematom@gmail.com">✉️ islematom@gmail.com</a><a href="tel:+32499374830">📞 0499 37 48 30</a></div></div>
+  <div><a href="panel.html" style="font-weight:800">🔧 Espace garage</a> · <span class="sig"><span style="opacity:.6">v3.6</span></span></div><div class="devbox"><a class="credit" href="https://www.hassanimohamedislam.com" target="_blank" rel="noopener">Développé avec <span class="hb">♥</span> par le développeur <b>Atom</b></a><div class="atom-ct"><a href="https://www.instagram.com/islem_atom/" target="_blank" rel="noopener">📷 @islem_atom</a><a href="mailto:islematom@gmail.com">✉️ islematom@gmail.com</a><a href="tel:+32499374830">📞 0499 37 48 30</a></div></div>
 </div></footer>
 
 <a href="#rdv" class="fab-rdv" id="fabrdv">📅 Prendre un RDV</a>
@@ -1005,35 +1005,33 @@ const CONFIG={
   emailjs:{publicKey:"",serviceId:"",templateId:""},
   fraisRate:50,                      // frais si le client ne vient pas sans prévenir
   pin:"0000",                       // code d'accès au panel (à changer à la remise)
-  // Base en ligne Supabase (Project URL + clé anon/publishable). Vide = tout reste sur l'appareil (aperçu)
-  supabase:{url:"https://bliqsmbbbhxqsovofqjs.supabase.co",key:"sb_publishable_JQxZXcMg-YtP4aoNdgSNpQ_dZvNi_10"},
+  // Serveur des données (api.php chez Hostinger). Vide = tout reste sur l'appareil (aperçu)
+  supabase:{url:"api.php",key:""},
   demo:false                     // true = exemples de démo ; false = version propre pour le client
 };
 // Frais de RDV raté : désactivés par défaut, le garage les active dans son panel
 const fraisOnStore={set(v){try{localStorage.setItem('ltautos_frais_on_v1',JSON.stringify(!!v))}catch(e){}}};
 const fraisOn=()=>{try{return JSON.parse(localStorage.getItem('ltautos_frais_on_v1'))===true}catch(e){return false}};
 const fraisAmt=()=>{try{const v=localStorage.getItem('ltautos_frais_rate_v35');if(v)return +JSON.parse(v)||CONFIG.fraisRate}catch(e){}return CONFIG.fraisRate};
-/* ========= EN LIGNE (Supabase) : RDV, voitures, horaires… partagés sur tous les téléphones ========= */
-const SB=(()=>{const C=CONFIG.supabase||{},on=!!(C.url&&C.key);
+/* ========= EN LIGNE (serveur Hostinger, api.php) : RDV, voitures, horaires… partagés sur tous les téléphones ========= */
+const SB=(()=>{const C=CONFIG.supabase||{},on=!!C.url;
  const PUBK=['ltautos_voitures_v1','ltautos_horaires_v1','ltautos_dispo_v29','ltautos_heures_v23','ltautos_fidelite_v1','ltautos_frais_on_v1','ltautos_frais_rate_v35'];
  const PANELK=PUBK.concat(['ltautos_clients_v22','ltautos_codes_v25','ltautos_rappels_v32','ltautos_points_v32','ltautos_points_bonus_v1','ltautos_sms_v1','ltautos_taches_v31','ltautos_agenda_v32']);
  const RDVK='ltautos_rdv_v29',TOK='ltautos_ptoken',CTOK='ltautos_ctoken',SENT='ltautos_envoyes';
  const _get=Storage.prototype.getItem,_set=Storage.prototype.setItem,_rem=Storage.prototype.removeItem;
  const raw=k=>{try{return _get.call(localStorage,k)}catch(e){return null}},put=(k,v)=>{try{_set.call(localStorage,k,v)}catch(e){}},del=k=>{try{_rem.call(localStorage,k)}catch(e){}};
  const J=v=>{try{return JSON.parse(v)}catch(e){return null}};
- const HD=ct=>Object.assign({apikey:C.key,'Content-Type':ct||'application/json'},String(C.key).startsWith('eyJ')?{Authorization:'Bearer '+C.key}:{});
- const rpc=(fn,args)=>fetch(C.url+'/rest/v1/rpc/'+fn,{method:'POST',headers:HD(),body:JSON.stringify(args||{})}).then(r=>r.ok?r.json():Promise.reject(new Error('HTTP '+r.status)));
+ const rpc=(fn,args)=>fetch(C.url+'?fn='+fn,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(args||{}),cache:'no-store'}).then(r=>r.ok?r.json():Promise.reject(new Error('HTTP '+r.status)));
  let mode=null,pending={},timer=null,busy=0,lastPull=0;
  const net=b=>{const e=document.getElementById('netb');if(e)e.className=b?'on':''};
  if(on)Storage.prototype.setItem=function(k,v){_set.call(this,k,v);if(this===localStorage&&typeof k==='string')queue(k,v)};
  function queue(k,v){if(mode==='panel'&&(PANELK.includes(k)||k===RDVK)){pending[k]=v;clearTimeout(timer);timer=setTimeout(flush,350)}else if(mode==='site'&&k===RDVK)siteBook()}
- // ---- photos des voitures : envoyées dans le stockage Supabase, on garde seulement leur adresse
- async function upPhotos(list){let ticket=null,changed=false;
-  for(const v of list||[])for(let i=0;i<(v.photos||[]).length;i++){const p=v.photos[i];if(!String(p).startsWith('data:'))continue;
-   if(!ticket){const t=await rpc('lt_photo_ticket',{token:raw(TOK)});if(!t.ok)throw new Error('ticket');ticket=t.folder}
-   const blob=await (await fetch(p)).blob(),path=ticket+'/'+Date.now().toString(36)+Math.random().toString(36).slice(2,7)+'.jpg';
-   const r=await fetch(C.url+'/storage/v1/object/lt-photos/'+path,{method:'POST',headers:HD(blob.type||'image/jpeg'),body:blob});
-   if(!r.ok)throw new Error('photo');v.photos[i]=C.url+'/storage/v1/object/public/lt-photos/'+path;changed=true}
+ // ---- photos des voitures : envoyées sur le serveur, on garde seulement leur adresse (les anciennes photos Supabase sont rapatriées)
+ async function upPhotos(list){let changed=false;
+  for(const v of list||[])for(let i=0;i<(v.photos||[]).length;i++){const p=String(v.photos[i]);if(!(p.startsWith('data:')||/supabase\.co\//.test(p)))continue;
+   const blob=await (await fetch(p)).blob();
+   const r=await (await fetch(C.url+'?fn=photo&token='+encodeURIComponent(raw(TOK)||''),{method:'POST',headers:{'Content-Type':blob.type||'image/jpeg'},body:blob})).json();
+   if(!r.ok)throw new Error('photo');v.photos[i]=r.url;changed=true}
   return changed}
  async function flush(){if(!on||mode!=='panel')return;const P=pending;pending={};const keys=Object.keys(P);if(!keys.length)return;busy++;net(1);
   try{for(const k of keys){let val=J(P[k]);
@@ -1049,12 +1047,13 @@ const SB=(()=>{const C=CONFIG.supabase||{},on=!!(C.url&&C.key);
  async function pull(force){if(!on||mode!=='panel'||!raw(TOK))return false;if(busy||Object.keys(pending).length)return false;if(!force&&Date.now()-lastPull<4000)return false;lastPull=Date.now();
   let r;try{r=await rpc('lt_panel_pull',{token:raw(TOK)})}catch(e){return false}
   if(!r.ok){expired();return false}if(busy||Object.keys(pending).length)return false;
+  if(r.fresh){const ks=PANELK.concat([RDVK]).filter(k=>raw(k)!==null);if(ks.length){ks.forEach(k=>pending[k]=raw(k));if(raw('ltautos_voitures_v1'))pending['ltautos_voitures_v1']=raw('ltautos_voitures_v1');await flush();return true}}
   const before=raw(RDVK)+'|'+PANELK.map(raw).join('|');
   PANELK.forEach(k=>{if(r.kv&&k in r.kv)put(k,JSON.stringify(r.kv[k]))});put(RDVK,JSON.stringify(r.rdv||[]));
   const after=raw(RDVK)+'|'+PANELK.map(raw).join('|');refreshGlobals();
   if(before!==after&&typeof renderPanel==='function'&&auth&&!['edit','ajout','voiture','horaires','points','codes'].includes(pv)&&!document.querySelector('.sheet')){const y=scrollY;renderPanel();scrollTo(0,y)}
   try{checkNew()}catch(e){}return true}
- async function login(code){if(!on)return null;try{const r=await rpc('lt_panel_login',{code});if(!r.ok)return r;put(TOK,r.token);await pull(true);return r}catch(e){toast('📶 Pas de connexion internet');return {ok:false,net:true}}}
+ async function login(code){if(!on)return null;try{const r=await rpc('lt_panel_login',{code,codes:J(raw('ltautos_codes_v25'))||undefined});if(!r.ok)return r;put(TOK,r.token);await pull(true);return r}catch(e){toast('📶 Pas de connexion internet');return {ok:false,net:true}}}
  function logoutSrv(){const t=raw(TOK);del(TOK);if(on&&t)rpc('lt_panel_logout',{token:t}).catch(()=>{})}
  function startPanel(){mode='panel';if(!on)return;if(!raw(TOK)){try{localStorage.removeItem('ltautos_auth')}catch(e){}}
   setInterval(()=>{if(!document.hidden)pull()},15000);document.addEventListener('visibilitychange',()=>{if(!document.hidden)pull(true)});pull(true)}
