@@ -39,7 +39,8 @@ function kvAll($onlyPub){ $o=[]; foreach(q('SELECT k,v FROM lt_kv'.($onlyPub?' W
 function rdvAll(){ return array_map(fn($r)=>jd($r['d']), q('SELECT d FROM lt_rdv ORDER BY created_at')->fetchAll()); }
 function kvSet($k,$v){ q('INSERT INTO lt_kv(k,v,pub) VALUES(?,?,?) ON DUPLICATE KEY UPDATE v=VALUES(v),pub=VALUES(pub)',[$k,json_encode($v,JSON_UNESCAPED_UNICODE),in_array($k,PUBK)?1:0]); }
 function who($t){ if(!is_string($t)||strlen($t)<20) return null; $r=q('SELECT who FROM lt_sessions WHERE token=? AND exp>NOW()',[$t])->fetch(); return $r?$r['who']:null; }
-function isFresh(){ return !q('SELECT 1 FROM lt_kv WHERE k<>? LIMIT 1',[CODESK])->fetch() && !q('SELECT 1 FROM lt_rdv LIMIT 1')->fetch(); }
+// « base neuve » = aucun réglage du garage encore reçu (les RDV pris sur le site ne comptent pas)
+function isFresh(){ return !q('SELECT 1 FROM lt_kv WHERE k<>? LIMIT 1',[CODESK])->fetch(); }
 function session($who){ q('DELETE FROM lt_sessions WHERE exp<NOW()'); $t=tok(); q('INSERT INTO lt_sessions VALUES(?,?,DATE_ADD(NOW(),INTERVAL 120 DAY))',[$t,$who]); return $t; }
 function clientData($acc){
   $d=jd($acc['d'])?:[]; $d['email']=$acc['email']; $email=$acc['email']; $tel=substr(digits($d['tel']??''),-9);
