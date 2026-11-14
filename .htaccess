@@ -1,0 +1,4 @@
+Options -Indexes
+<FilesMatch "^(lt-config\.php|\.git.*)$">
+  Require all denied
+</FilesMatch>
