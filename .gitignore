@@ -1,3 +1,5 @@
 lt-config.php
+lt-admin.php
+lt-brevo.php
 photos/*
 !photos/.keep
