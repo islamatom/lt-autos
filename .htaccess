@@ -1,4 +1,4 @@
 Options -Indexes
-<FilesMatch "^(lt-config\.php|\.git.*)$">
+<FilesMatch "^(lt-(config|admin|brevo)\.php|\.git.*)$">
   Require all denied
 </FilesMatch>

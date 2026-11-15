@@ -10,6 +10,7 @@ header('X-Content-Type-Options: nosniff');
 const PUBK = ['ltautos_voitures_v1','ltautos_horaires_v1','ltautos_dispo_v29','ltautos_heures_v23','ltautos_fidelite_v1','ltautos_frais_on_v1','ltautos_frais_rate_v35'];
 const PRIVK = ['ltautos_clients_v22','ltautos_codes_v25','ltautos_rappels_v32','ltautos_points_v32','ltautos_points_bonus_v1','ltautos_sms_v1','ltautos_taches_v31','ltautos_agenda_v32'];
 const CODESK = 'ltautos_codes_v25';
+const CREDK = 'ltautos_sms_credits'; // compteur de SMS : seul Atom le remplit
 
 function out($a){ echo json_encode($a, JSON_UNESCAPED_UNICODE|JSON_UNESCAPED_SLASHES); exit; }
 function fail($e=null){ out($e===null?['ok'=>false]:['ok'=>false,'err'=>$e]); }
@@ -18,6 +19,8 @@ function fail($e=null){ out($e===null?['ok'=>false]:['ok'=>false,'err'=>$e]); }
 $cfgFiles = [__DIR__.'/../lt-config.php', __DIR__.'/lt-config.php'];
 $CFG = null; foreach ($cfgFiles as $f) if (is_file($f)) { $CFG = include $f; break; }
 if (!$CFG) { http_response_code(500); fail('config'); }
+// clés séparées : lt-admin.php (secret d'Atom) et lt-brevo.php (envoi des SMS), remplaçables sans toucher à la base
+foreach (['lt-admin.php','lt-brevo.php'] as $x) if (is_file(__DIR__.'/'.$x)) { $more = include __DIR__.'/'.$x; if (is_array($more)) $CFG = array_merge($CFG, $more); }
 try {
   $db = new PDO('mysql:host=127.0.0.1;port=3306;dbname='.$CFG['db'].';charset=utf8mb4', $CFG['user'], $CFG['pass'],
     [PDO::ATTR_ERRMODE=>PDO::ERRMODE_EXCEPTION, PDO::ATTR_DEFAULT_FETCH_MODE=>PDO::FETCH_ASSOC]);
@@ -40,7 +43,18 @@ function rdvAll(){ return array_map(fn($r)=>jd($r['d']), q('SELECT d FROM lt_rdv
 function kvSet($k,$v){ q('INSERT INTO lt_kv(k,v,pub) VALUES(?,?,?) ON DUPLICATE KEY UPDATE v=VALUES(v),pub=VALUES(pub)',[$k,json_encode($v,JSON_UNESCAPED_UNICODE),in_array($k,PUBK)?1:0]); }
 function who($t){ if(!is_string($t)||strlen($t)<20) return null; $r=q('SELECT who FROM lt_sessions WHERE token=? AND exp>NOW()',[$t])->fetch(); return $r?$r['who']:null; }
 // « base neuve » = aucun réglage du garage encore reçu (les RDV pris sur le site ne comptent pas)
-function isFresh(){ return !q('SELECT 1 FROM lt_kv WHERE k<>? LIMIT 1',[CODESK])->fetch(); }
+function credits($lock=false){ $r=q('SELECT v FROM lt_kv WHERE k=?'.($lock?' FOR UPDATE':''),[CREDK])->fetch(); return $r?(int)jd($r['v']):0; }
+// SMS sans émojis ni lettres spéciales : sinon 1 SMS = 70 caractères au lieu de 160 (le compteur fond 2× plus vite)
+function smsClean($t){
+  $map=['â'=>'a','ä'=>'a','á'=>'a','ã'=>'a','ê'=>'e','ë'=>'e','î'=>'i','ï'=>'i','í'=>'i','ô'=>'o','ö'=>'o','ó'=>'o','õ'=>'o','û'=>'u','ü'=>'u','ú'=>'u','ç'=>'c','œ'=>'oe','æ'=>'ae','ÿ'=>'y',
+    'Â'=>'A','À'=>'A','Á'=>'A','Ê'=>'E','È'=>'E','Ë'=>'E','Î'=>'I','Ï'=>'I','Ô'=>'O','Û'=>'U','Ù'=>'U','Œ'=>'OE',
+    '’'=>"'",'‘'=>"'",'“'=>'"','”'=>'"','«'=>'"','»'=>'"','…'=>'...','–'=>'-','—'=>'-','•'=>'-','€'=>'EUR',"\u{00A0}"=>' ',"\u{202F}"=>' '];
+  $t=strtr((string)$t,$map);
+  $ok="@£\$¥èéùìòÇ\nØø\rÅåΔ_ΦΓΛΩΠΨΣΘΞÆßÉ !\"#¤%&'()*+,-./0123456789:;<=>?¡ABCDEFGHIJKLMNOPQRSTUVWXYZÄÖÑÜ§¿abcdefghijklmnopqrstuvwxyzäöñüà";
+  $o=''; foreach(preg_split('//u',$t,-1,PREG_SPLIT_NO_EMPTY) as $ch) if(mb_strpos($ok,$ch)!==false) $o.=$ch;
+  return trim(preg_replace(['/[ \t]{2,}/','/ ([.,!?])/','/\n /'],[' ','$1',"\n"],$o));
+}
+function isFresh(){ return !q('SELECT 1 FROM lt_kv WHERE k NOT IN (?,?) LIMIT 1',[CODESK,CREDK])->fetch(); }
 function session($who){ q('DELETE FROM lt_sessions WHERE exp<NOW()'); $t=tok(); q('INSERT INTO lt_sessions VALUES(?,?,DATE_ADD(NOW(),INTERVAL 120 DAY))',[$t,$who]); return $t; }
 function clientData($acc){
   $d=jd($acc['d'])?:[]; $d['email']=$acc['email']; $email=$acc['email']; $tel=substr(digits($d['tel']??''),-9);
@@ -126,7 +140,32 @@ case 'lt_panel_login':
 
 case 'lt_panel_pull':
   $w = who($a['token'] ?? null); if (!$w) fail();
-  out(['ok'=>true,'who'=>$w,'kv'=>kvAll(false),'rdv'=>rdvAll(),'fresh'=>isFresh()]);
+  $kv = kvAll(false); unset($kv->{CREDK});
+  out(['ok'=>true,'who'=>$w,'kv'=>$kv,'rdv'=>rdvAll(),'fresh'=>isFresh(),'sms'=>credits(),'smsOn'=>!empty($CFG['brevo'])]);
+
+/* ---------- SMS (Brevo) : 1 SMS envoyé = 1 SMS en moins sur le compteur ---------- */
+case 'lt_sms_send':
+  if (!who($a['token'] ?? null)) fail();
+  if (empty($CFG['brevo'])) fail('off');
+  $to = digits($a['to'] ?? ''); if (str_starts_with($to,'00')) $to=substr($to,2); elseif (str_starts_with($to,'0')) $to='32'.substr($to,1);
+  $txt = smsClean($a['text'] ?? ''); if (strlen($to)<10 || $txt==='') fail('invalide');
+  $parts = mb_strlen($txt) <= 160 ? 1 : (int)ceil(mb_strlen($txt)/153);
+  $db->beginTransaction();
+  $c = credits(true); if ($c < $parts) { $db->rollBack(); out(['ok'=>false,'err'=>'credits','sms'=>$c]); }
+  kvSet(CREDK, $c-$parts); $db->commit();
+  $ch = curl_init('https://api.brevo.com/v3/transactionalSMS/sms');
+  curl_setopt_array($ch,[CURLOPT_POST=>true,CURLOPT_RETURNTRANSFER=>true,CURLOPT_TIMEOUT=>15,
+    CURLOPT_HTTPHEADER=>['api-key: '.$CFG['brevo'],'Content-Type: application/json','Accept: application/json'],
+    CURLOPT_POSTFIELDS=>json_encode(['sender'=>$CFG['sender'] ?? 'LTAutos','recipient'=>$to,'content'=>$txt,'type'=>'transactional'])]);
+  $res = curl_exec($ch); $code = curl_getinfo($ch, CURLINFO_HTTP_CODE); curl_close($ch);
+  if ($code < 200 || $code >= 300) { $db->beginTransaction(); kvSet(CREDK, credits(true)+$parts); $db->commit(); out(['ok'=>false,'err'=>'brevo','sms'=>credits()]); }
+  out(['ok'=>true,'sms'=>credits()]);
+
+/* ---------- ATOM : ajouter des SMS au compteur (clé secrète dans lt-config.php) ---------- */
+case 'lt_admin':
+  if (empty($CFG['admin']) || !hash_equals($CFG['admin'], (string)($a['secret'] ?? ''))) { usleep(800000); fail(); }
+  if (isset($a['add'])) { $db->beginTransaction(); kvSet(CREDK, max(0, credits(true) + (int)$a['add'])); $db->commit(); }
+  out(['ok'=>true,'sms'=>credits(),'smsOn'=>!empty($CFG['brevo'])]);
 
 case 'lt_panel_set':
   $w = who($a['token'] ?? null); if (!$w) fail();
