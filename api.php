@@ -54,6 +54,22 @@ function smsClean($t){
   $o=''; foreach(preg_split('//u',$t,-1,PREG_SPLIT_NO_EMPTY) as $ch) if(mb_strpos($ok,$ch)!==false) $o.=$ch;
   return trim(preg_replace(['/[ \t]{2,}/','/ ([.,!?])/','/\n /'],[' ','$1',"\n"],$o));
 }
+
+/* ---- E-mails aux clients (envoyés depuis info@ltautos.eu) ---- */
+function mailTo($to,$sujet,$titre,$texte,$r=[]){
+  global $CFG; $from=$CFG['mail'] ?? 'info@ltautos.eu'; $nom=$CFG['nom'] ?? 'LT Autos'; $tel=$CFG['tel'] ?? '0493/45.76.11';
+  if(!filter_var($to,FILTER_VALIDATE_EMAIL)) return false;
+  $e=fn($x)=>htmlspecialchars((string)$x,ENT_QUOTES,'UTF-8');
+  $lig=''; foreach(['📅 Date'=>trim(($r['date']??'').' '.($r['heure']??'')),'🚗 Voiture'=>$r['voiture']??'','🛠️ Motif'=>$r['service']??''] as $k=>$v) if(trim($v)!=='') $lig.='<tr><td style="padding:6px 0;color:#5b6472">'.$k.'</td><td style="padding:6px 0;font-weight:700;text-align:right">'.$e($v).'</td></tr>';
+  $html='<!doctype html><html><body style="margin:0;background:#f4f5f7;font-family:Arial,Helvetica,sans-serif;color:#14171c"><div style="max-width:520px;margin:0 auto;padding:20px">'
+   .'<div style="background:#111;color:#fff;border-radius:16px 16px 0 0;padding:18px 22px;font-size:22px;font-weight:900;letter-spacing:1px">LT <span style="color:#ff3b42">AUTOS</span></div>'
+   .'<div style="background:#fff;border-radius:0 0 16px 16px;padding:22px;border-top:4px solid #d71f26"><h1 style="font-size:21px;margin:0 0 12px">'.$e($titre).'</h1>'
+   .'<p style="font-size:16px;line-height:1.5;margin:0 0 14px">Bonjour '.$e($r['prenom'] ?? '').',<br>'.nl2br($e($texte)).'</p>'
+   .($lig?'<table style="width:100%;border-collapse:collapse;font-size:15px;border-top:1px solid #eee;border-bottom:1px solid #eee;margin:6px 0 16px">'.$lig.'</table>':'')
+   .'<p style="font-size:14px;color:#5b6472;margin:0">'.$e($nom).' · 23 Rue Emile Godfrind, 5300 Seilles<br>📞 '.$e($tel).' · <a href="https://ltautos.eu" style="color:#d71f26">ltautos.eu</a></p></div></div></body></html>';
+  $h="MIME-Version: 1.0\r\nContent-Type: text/html; charset=UTF-8\r\nFrom: =?UTF-8?B?".base64_encode($nom)."?= <$from>\r\nReply-To: $from\r\n";
+  return @mail($to,'=?UTF-8?B?'.base64_encode($sujet).'?=',$html,$h,'-f'.$from);
+}
 function isFresh(){ return !q('SELECT 1 FROM lt_kv WHERE k NOT IN (?,?) LIMIT 1',[CODESK,CREDK])->fetch(); }
 function session($who){ q('DELETE FROM lt_sessions WHERE exp<NOW()'); $t=tok(); q('INSERT INTO lt_sessions VALUES(?,?,DATE_ADD(NOW(),INTERVAL 120 DAY))',[$t,$who]); return $t; }
 function clientData($acc){
@@ -104,6 +120,10 @@ case 'lt_book':
   $id = 'r'.date('YmdHis').sprintf('%03d',(int)(microtime(true)*1000)%1000).bin2hex(random_bytes(2));
   unset($r['id'],$r['statut'],$r['travaux'],$r['noteValid']); $r['id']=$id; $r['statut']='nouveau';
   q('INSERT INTO lt_rdv(id,d) VALUES(?,?)',[$id,json_encode($r,JSON_UNESCAPED_UNICODE)]);
+  $urg=!empty($r['urgence']);
+  if(!empty($r['email'])) mailTo($r['email'], ($urg?'Demande urgente reçue':'Demande de rendez-vous reçue').' – LT Autos', 'Demande bien reçue ⏳',
+    $urg?"Votre demande urgente est bien arrivée au garage. Le garage vous rappelle au plus vite pour vous dire s'il peut vous prendre aujourd'hui.":"Votre créneau est réservé et en attente de confirmation par le garage. Vous recevrez un e-mail dès que le garage l'aura validé.", $r);
+  mailTo($CFG['mail'] ?? 'info@ltautos.eu', ($urg?'🚨 URGENCE – ':'🔧 Nouveau RDV – ').($r['nom'] ?? ''), 'Nouveau rendez-vous à valider', "Un client vient de prendre rendez-vous sur ltautos.eu.\nGSM : ".($r['tel'] ?? '')."\nE-mail : ".($r['email'] ?? '')."\n\nOuvrez votre panel (le cadenas en haut à gauche du site) pour le valider.", $r+['prenom'=>'LT Autos']);
   out(['ok'=>true,'id'=>$id]);
 
 case 'lt_client_signup':
@@ -179,6 +199,16 @@ case 'lt_panel_rdv_put':
   foreach (($a['list'] ?? []) as $x) if (!empty($x['id']))
     q('INSERT INTO lt_rdv(id,d) VALUES(?,?) ON DUPLICATE KEY UPDATE d=VALUES(d)',[(string)$x['id'],json_encode($x,JSON_UNESCAPED_UNICODE)]);
   out(['ok'=>true]);
+
+case 'lt_mail':
+  if (!who($a['token'] ?? null)) fail();
+  $to = strtolower(trim((string)($a['to'] ?? '')));
+  $known = false; $r = [];
+  foreach (rdvAll() as $x) if (strtolower($x['email'] ?? '') === $to) { $known = true; if (($x['id'] ?? '') === ($a['id'] ?? '')) $r = $x; }
+  if (!$known && q('SELECT 1 FROM lt_accounts WHERE email=?',[$to])->fetch()) $known = true;
+  if (!$known) fail('inconnu');
+  $r = array_merge($r, array_intersect_key((array)($a['r'] ?? []), array_flip(['prenom','date','heure','voiture','service'])));
+  out(['ok'=>(bool)mailTo($to, mb_substr((string)($a['sujet'] ?? 'LT Autos'),0,150), mb_substr((string)($a['titre'] ?? ''),0,150), mb_substr((string)($a['texte'] ?? ''),0,2000), $r)]);
 
 case 'lt_panel_logout':
   q('DELETE FROM lt_sessions WHERE token=?',[(string)($a['token'] ?? '')]); out(['ok'=>true]);
