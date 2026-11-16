@@ -60,13 +60,18 @@ function mailTo($to,$sujet,$titre,$texte,$r=[]){
   global $CFG; $from=$CFG['mail'] ?? 'info@ltautos.eu'; $nom=$CFG['nom'] ?? 'LT Autos'; $tel=$CFG['tel'] ?? '0493/45.76.11';
   if(!filter_var($to,FILTER_VALIDATE_EMAIL)) return false;
   $e=fn($x)=>htmlspecialchars((string)$x,ENT_QUOTES,'UTF-8');
-  $lig=''; foreach(['📅 Date'=>trim(($r['date']??'').' '.($r['heure']??'')),'🚗 Voiture'=>$r['voiture']??'','🛠️ Motif'=>$r['service']??''] as $k=>$v) if(trim($v)!=='') $lig.='<tr><td style="padding:6px 0;color:#5b6472">'.$k.'</td><td style="padding:6px 0;font-weight:700;text-align:right">'.$e($v).'</td></tr>';
-  $html='<!doctype html><html><body style="margin:0;background:#f4f5f7;font-family:Arial,Helvetica,sans-serif;color:#14171c"><div style="max-width:520px;margin:0 auto;padding:20px">'
-   .'<div style="background:#111;color:#fff;border-radius:16px 16px 0 0;padding:18px 22px;font-size:22px;font-weight:900;letter-spacing:1px">LT <span style="color:#ff3b42">AUTOS</span></div>'
-   .'<div style="background:#fff;border-radius:0 0 16px 16px;padding:22px;border-top:4px solid #d71f26"><h1 style="font-size:21px;margin:0 0 12px">'.$e($titre).'</h1>'
-   .'<p style="font-size:16px;line-height:1.5;margin:0 0 14px">Bonjour '.$e($r['prenom'] ?? '').',<br>'.nl2br($e($texte)).'</p>'
-   .($lig?'<table style="width:100%;border-collapse:collapse;font-size:15px;border-top:1px solid #eee;border-bottom:1px solid #eee;margin:6px 0 16px">'.$lig.'</table>':'')
-   .'<p style="font-size:14px;color:#5b6472;margin:0">'.$e($nom).' · 23 Rue Emile Godfrind, 5300 Seilles<br>📞 '.$e($tel).' · <a href="https://ltautos.eu" style="color:#d71f26">ltautos.eu</a></p></div></div></body></html>';
+  $lig=''; foreach(['📅 Date'=>trim(($r['date']??'').' '.($r['heure']??'')),'🚗 Voiture'=>$r['voiture']??'','🛠️ Motif'=>$r['service']??''] as $k=>$v) if(trim($v)!=='') $lig.='<tr><td style="padding:8px 0;color:#5b6472;border-bottom:1px solid #e6e8ec">'.$k.'</td><td style="padding:8px 0;font-weight:700;text-align:right;border-bottom:1px solid #e6e8ec">'.$e($v).'</td></tr>';
+  $btn=fn($href,$txt,$bg)=>'<a href="'.$href.'" style="display:inline-block;margin:4px;padding:12px 18px;border-radius:10px;background:'.$bg.';color:#fff;text-decoration:none;font-weight:700;font-size:15px">'.$txt.'</a>';
+  $html='<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"></head><body style="margin:0;background:#eef0f3;font-family:Arial,Helvetica,sans-serif;color:#14171c">'
+   .'<div style="max-width:560px;margin:0 auto;padding:24px 14px">'
+   .'<div style="background:#fff;border-radius:18px;overflow:hidden;box-shadow:0 6px 24px rgba(0,0,0,.08)">'
+   .'<div style="text-align:center;padding:26px 20px 18px;border-bottom:4px solid #d71f26"><a href="https://ltautos.eu"><img src="https://ltautos.eu/logo-mail.png" width="220" alt="LT Autos" style="width:220px;max-width:70%;height:auto;border:0"></a></div>'
+   .'<div style="padding:26px 24px 8px"><h1 style="font-size:22px;line-height:1.3;margin:0 0 14px;color:#111">'.$e($titre).'</h1>'
+   .'<p style="font-size:16px;line-height:1.6;margin:0 0 18px;color:#333">Bonjour '.$e($r['prenom'] ?? '').',<br>'.nl2br($e($texte)).'</p>'
+   .($lig?'<table role="presentation" style="width:100%;border-collapse:collapse;font-size:15px;background:#f6f7f9;border-radius:12px;margin:0 0 20px"><tr><td style="padding:6px 16px"><table role="presentation" style="width:100%;border-collapse:collapse">'.$lig.'</table></td></tr></table>':'')
+   .'<div style="text-align:center;margin:6px 0 22px">'.$btn('tel:+32493457611','📞 Appeler','#111').$btn('https://maps.google.com/?q=23+Rue+Emile+Godfrind+5300+Seilles','📍 Itinéraire','#d71f26').$btn('https://ltautos.eu','🌐 Le site','#555').'</div></div>'
+   .'<div style="background:#111;color:#cfd3da;padding:18px 24px;font-size:13px;line-height:1.6;text-align:center"><b style="color:#fff;letter-spacing:1px">LT <span style="color:#ff3b42">AUTOS</span></b><br>23 Rue Emile Godfrind, 5300 Seilles (Andenne)<br>📞 '.$e($tel).' · <a href="mailto:'.$from.'" style="color:#ff6b70">'.$from.'</a></div>'
+   .'</div><p style="text-align:center;font-size:11.5px;color:#8a919c;margin:14px 0 0">Vous recevez cet e-mail suite à votre demande sur ltautos.eu</p></div></body></html>';
   $h="MIME-Version: 1.0\r\nContent-Type: text/html; charset=UTF-8\r\nFrom: =?UTF-8?B?".base64_encode($nom)."?= <$from>\r\nReply-To: $from\r\n";
   return @mail($to,'=?UTF-8?B?'.base64_encode($sujet).'?=',$html,$h,'-f'.$from);
 }
